@@ -5,6 +5,9 @@ import type { Post, PostSummary } from '~/types/blog'
 
 const POSTS_DIR = path.resolve(process.cwd(), 'content/posts')
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type D1Binding = any
+
 interface PostRow {
   slug: string
   title: string
@@ -16,9 +19,6 @@ interface PostRow {
   tags: string
   body: string
 }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type D1Binding = any
 
 function rowToPost(row: PostRow): Post {
   return {
@@ -38,8 +38,6 @@ function toSummary(post: Post): PostSummary {
   const { body, ...summary } = post
   return summary
 }
-
-// ─── Filesystem helpers ───
 
 function fromSlug(slug: string): string {
   return path.join(POSTS_DIR, `${slug}.md`)
@@ -63,8 +61,6 @@ function parsePostFile(raw: string, filepath: string): Post {
     body: content.trim(),
   }
 }
-
-// ─── Exported API ───
 
 export async function listPosts(db: D1Binding | undefined, query?: { from?: string }): Promise<PostSummary[]> {
   if (db) {

@@ -2,7 +2,7 @@ export default defineEventHandler(async (event) => {
   const name = getRouterParam(event, 'name')
   if (!name) throw createError({ statusCode: 404 })
 
-  const r2 = event.context?.cloudflare?.env?.IMAGES
+  const r2 = event.context?._platform?.cloudflare?.env?.IMAGES
   if (r2) {
     const object = await r2.get(name)
     if (!object) throw createError({ statusCode: 404 })

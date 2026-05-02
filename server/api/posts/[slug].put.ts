@@ -2,7 +2,7 @@ import { updatePost } from '~/server/utils/posts'
 import type { Post } from '~/types/blog'
 
 export default defineEventHandler(async (event) => {
-  const db = event.context?.cloudflare?.env?.DB
+  const db = event.context?._platform?.cloudflare?.env?.DB
   const slug = getRouterParam(event, 'slug')
   if (!slug) {
     throw createError({ statusCode: 400, statusMessage: 'slug is required' })

@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
 
   const name = `${randomUUID()}${ext}`
 
-  const r2 = event.context?.cloudflare?.env?.IMAGES
+  const r2 = event.context?._platform?.cloudflare?.env?.IMAGES
   if (r2) {
     await r2.put(name, file.data, {
       httpMetadata: { contentType: file.type },
