@@ -1,9 +1,53 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import matter from 'gray-matter'
+import { getRequestEvent } from 'h3'
 import type { Post, PostSummary } from '~/types/blog'
 
 const POSTS_DIR = path.resolve(process.cwd(), 'content/posts')
+
+function getD1() {
+  try {
+    const event = getRequestEvent()
+    const db = event?.context?.cloudflare?.env?.DB
+    return db ?? null
+  } catch {
+    return null
+  }
+}
+
+interface PostRow {
+  slug: string
+  title: string
+  published_at: string
+  cover_image: string | null
+  cover_alt: string | null
+  cover_caption: string | null
+  excerpt: string | null
+  tags: string
+  body: string
+}
+
+function rowToPost(row: PostRow): Post {
+  return {
+    slug: row.slug,
+    title: row.title,
+    publishedAt: row.published_at,
+    coverImage: row.cover_image || undefined,
+    coverAlt: row.cover_alt || undefined,
+    coverCaption: row.cover_caption || undefined,
+    excerpt: row.excerpt || undefined,
+    tags: JSON.parse(row.tags || '[]'),
+    body: row.body,
+  }
+}
+
+function toSummary(post: Post): PostSummary {
+  const { body, ...summary } = post
+  return summary
+}
+
+// ─── Filesystem helpers (dev fallback) ───
 
 function fromSlug(slug: string): string {
   return path.join(POSTS_DIR, `${slug}.md`)
@@ -28,12 +72,24 @@ function parsePostFile(raw: string, filepath: string): Post {
   }
 }
 
-function toSummary(post: Post): PostSummary {
-  const { body, ...summary } = post
-  return summary
-}
+// ─── Exported API ───
 
 export async function listPosts(query?: { from?: string }): Promise<PostSummary[]> {
+  const db = getD1()
+
+  if (db) {
+    let sql = 'SELECT * FROM posts ORDER BY published_at DESC'
+    const params: any[] = []
+    if (query?.from) {
+      sql = 'SELECT * FROM posts WHERE published_at >= ? ORDER BY published_at DESC'
+      const [year, month] = query.from.split('-')
+      params.push(new Date(Number(year), Number(month) - 1, 1).toISOString())
+    }
+    const { results } = await db.prepare(sql).bind(...params).all<PostRow>()
+    return results.map(rowToPost).map(toSummary)
+  }
+
+  // Fallback: filesystem
   let files: string[]
   try {
     files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))
@@ -52,15 +108,22 @@ export async function listPosts(query?: { from?: string }): Promise<PostSummary[
   if (query?.from) {
     const [year, month] = query.from.split('-')
     const fromDate = new Date(Number(year), Number(month) - 1, 1)
-    return posts
-      .filter((p) => new Date(p.publishedAt) >= fromDate)
-      .map(toSummary)
+    return posts.filter((p) => new Date(p.publishedAt) >= fromDate).map(toSummary)
   }
 
   return posts.map(toSummary)
 }
 
 export async function getPost(slug: string): Promise<Post | null> {
+  const db = getD1()
+
+  if (db) {
+    const { results } = await db.prepare('SELECT * FROM posts WHERE slug = ?').bind(slug).all<PostRow>()
+    if (results.length === 0) return null
+    return rowToPost(results[0])
+  }
+
+  // Fallback: filesystem
   const filepath = fromSlug(slug)
   try {
     const raw = await fs.readFile(filepath, 'utf-8')
@@ -71,6 +134,27 @@ export async function getPost(slug: string): Promise<Post | null> {
 }
 
 export async function createPost(post: Post): Promise<void> {
+  const db = getD1()
+
+  if (db) {
+    await db.prepare(
+      `INSERT INTO posts (slug, title, published_at, cover_image, cover_alt, cover_caption, excerpt, tags, body)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      post.slug,
+      post.title,
+      post.publishedAt,
+      post.coverImage ?? null,
+      post.coverAlt ?? null,
+      post.coverCaption ?? null,
+      post.excerpt ?? null,
+      JSON.stringify(post.tags),
+      post.body,
+    ).run()
+    return
+  }
+
+  // Fallback: filesystem
   const filepath = fromSlug(post.slug)
   const frontmatter: Record<string, unknown> = {
     title: post.title,
@@ -87,39 +171,81 @@ export async function createPost(post: Post): Promise<void> {
   await fs.writeFile(filepath, content, 'utf-8')
 }
 
-export async function updatePost(slug: string, post: Partial<Post> & { slug: string }): Promise<void> {
+export async function updatePost(slug: string, update: Partial<Post> & { slug: string }): Promise<void> {
+  const db = getD1()
+
+  if (db) {
+    await db.prepare(
+      `UPDATE posts SET slug = ?, title = ?, published_at = ?, cover_image = ?, cover_alt = ?, cover_caption = ?, excerpt = ?, tags = ?, body = ?
+       WHERE slug = ?`
+    ).bind(
+      update.slug,
+      update.title ?? '',
+      update.publishedAt ?? new Date().toISOString(),
+      update.coverImage ?? null,
+      update.coverAlt ?? null,
+      update.coverCaption ?? null,
+      update.excerpt ?? null,
+      JSON.stringify(update.tags ?? []),
+      update.body ?? '',
+      slug,
+    ).run()
+    return
+  }
+
+  // Fallback: filesystem
   const existing = await fs.readFile(fromSlug(slug), 'utf-8')
   const { data: oldData } = matter(existing)
 
   const merged: Record<string, unknown> = {
-    title: post.title ?? oldData.title,
-    publishedAt: post.publishedAt ?? oldData.publishedAt,
-    tags: post.tags ?? oldData.tags,
+    title: update.title ?? oldData.title,
+    publishedAt: update.publishedAt ?? oldData.publishedAt,
+    tags: update.tags ?? oldData.tags,
   }
-  if (post.coverImage !== undefined) merged.coverImage = post.coverImage
+  if (update.coverImage !== undefined) merged.coverImage = update.coverImage
   else if (oldData.coverImage) merged.coverImage = oldData.coverImage
-  if (post.coverAlt !== undefined) merged.coverAlt = post.coverAlt
+  if (update.coverAlt !== undefined) merged.coverAlt = update.coverAlt
   else if (oldData.coverAlt) merged.coverAlt = oldData.coverAlt
-  if (post.coverCaption !== undefined) merged.coverCaption = post.coverCaption
+  if (update.coverCaption !== undefined) merged.coverCaption = update.coverCaption
   else if (oldData.coverCaption) merged.coverCaption = oldData.coverCaption
-  if (post.excerpt !== undefined) merged.excerpt = post.excerpt
+  if (update.excerpt !== undefined) merged.excerpt = update.excerpt
   else if (oldData.excerpt) merged.excerpt = oldData.excerpt
 
-  const content = matter.stringify(post.body ?? matter(existing).content, merged)
+  const content = matter.stringify(update.body ?? matter(existing).content, merged)
 
-  if (slug !== post.slug) {
+  if (slug !== update.slug) {
     await fs.unlink(fromSlug(slug))
-    await fs.writeFile(fromSlug(post.slug), content, 'utf-8')
+    await fs.writeFile(fromSlug(update.slug), content, 'utf-8')
   } else {
     await fs.writeFile(fromSlug(slug), content, 'utf-8')
   }
 }
 
 export async function deletePost(slug: string): Promise<void> {
+  const db = getD1()
+
+  if (db) {
+    await db.prepare('DELETE FROM posts WHERE slug = ?').bind(slug).run()
+    return
+  }
+
+  // Fallback: filesystem
   await fs.unlink(fromSlug(slug))
 }
 
 export async function getAllTimelinePosts(): Promise<Pick<Post, 'slug' | 'title' | 'publishedAt'>[]> {
+  const db = getD1()
+
+  if (db) {
+    const { results } = await db.prepare('SELECT slug, title, published_at FROM posts ORDER BY published_at DESC').all<PostRow>()
+    return results.map((r) => ({
+      slug: r.slug,
+      title: r.title,
+      publishedAt: r.published_at,
+    }))
+  }
+
+  // Fallback: filesystem
   let files: string[]
   try {
     files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))

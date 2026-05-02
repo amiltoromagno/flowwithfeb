@@ -3,10 +3,6 @@ export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
 
-  nitro: {
-    preset: 'cloudflare-pages'
-  },
-
   modules: [
     '@nuxtjs/tailwindcss',
     'nuxt-auth-utils',
@@ -18,6 +14,10 @@ export default defineNuxtConfig({
 
   routeRules: {
     '/studio/**': { ssr: false },
+  },
+
+  nitro: {
+    preset: 'cloudflare-pages',
   },
 
   app: {

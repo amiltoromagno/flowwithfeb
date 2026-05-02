@@ -1,8 +1,5 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-
-const UPLOAD_DIR = path.resolve(process.cwd(), 'public/images')
+import { getRequestEvent } from 'h3'
 
 export default defineEventHandler(async (event) => {
   const formData = await readMultipartFormData(event)
@@ -15,15 +12,29 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'No filename' })
   }
 
-  const ext = path.extname(file.filename).toLowerCase()
+  const ext = '.' + (file.filename.split('.').pop()?.toLowerCase() || '')
   const allowedExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
   if (!allowedExts.includes(ext)) {
     throw createError({ statusCode: 400, statusMessage: 'Unsupported file type' })
   }
 
   const name = `${randomUUID()}${ext}`
+
+  // Cloudflare R2
+  const r2 = event.context?.cloudflare?.env?.IMAGES
+  if (r2) {
+    await r2.put(name, file.data, {
+      httpMetadata: { contentType: file.type },
+    })
+    // Return a path that works behind a custom domain or R2 public URL
+    return { url: `/images/${name}` }
+  }
+
+  // Dev fallback: filesystem
+  const fs = await import('node:fs/promises')
+  const path = await import('node:path')
+  const UPLOAD_DIR = path.resolve(process.cwd(), 'public/images')
   await fs.mkdir(UPLOAD_DIR, { recursive: true })
   await fs.writeFile(path.join(UPLOAD_DIR, name), file.data)
-
   return { url: `/images/${name}` }
 })
