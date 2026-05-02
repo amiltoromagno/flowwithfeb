@@ -1,9 +1,4 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
-import matter from 'gray-matter'
 import type { Post, PostSummary } from '~/types/blog'
-
-const POSTS_DIR = path.resolve(process.cwd(), 'content/posts')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type D1Binding = any
@@ -39,28 +34,26 @@ function toSummary(post: Post): PostSummary {
   return summary
 }
 
-function fromSlug(slug: string): string {
-  return path.join(POSTS_DIR, `${slug}.md`)
+// ─── Filesystem helpers (only loaded in dev fallback) ───
+
+let _fsModule: { fs: any; path: any; postsDir: string } | null = null
+
+async function getFsModule() {
+  if (_fsModule) return _fsModule
+  const [fsM, pathM, matterM] = await Promise.all([
+    import('node:fs/promises'),
+    import('node:path'),
+    import('gray-matter'),
+  ])
+  const fs = fsM.default
+  const path = pathM.default
+  const matter = matterM.default
+  const postsDir = path.resolve(process.cwd(), 'content/posts')
+  _fsModule = { fs, path, postsDir, matter }
+  return _fsModule
 }
 
-function toSlug(filepath: string): string {
-  return path.basename(filepath, '.md')
-}
-
-function parsePostFile(raw: string, filepath: string): Post {
-  const { data, content } = matter(raw)
-  return {
-    slug: toSlug(filepath),
-    title: data.title || '',
-    publishedAt: data.publishedAt || new Date().toISOString(),
-    coverImage: data.coverImage || undefined,
-    coverAlt: data.coverAlt || undefined,
-    coverCaption: data.coverCaption || undefined,
-    excerpt: data.excerpt || undefined,
-    tags: Array.isArray(data.tags) ? data.tags : [],
-    body: content.trim(),
-  }
-}
+// ─── Exported API ───
 
 export async function listPosts(db: D1Binding | undefined, query?: { from?: string }): Promise<PostSummary[]> {
   if (db) {
@@ -75,17 +68,29 @@ export async function listPosts(db: D1Binding | undefined, query?: { from?: stri
     return results.map(rowToPost).map(toSummary)
   }
 
+  const { fs, path, postsDir, matter } = await getFsModule()
   let files: string[]
   try {
-    files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))
+    files = (await fs.readdir(postsDir)).filter((f: string) => f.endsWith('.md'))
   } catch {
     return []
   }
 
   const posts: Post[] = []
   for (const file of files) {
-    const raw = await fs.readFile(path.join(POSTS_DIR, file), 'utf-8')
-    posts.push(parsePostFile(raw, file))
+    const raw = await fs.readFile(path.join(postsDir, file), 'utf-8')
+    const { data, content } = matter(raw)
+    posts.push({
+      slug: path.basename(file, '.md'),
+      title: data.title || '',
+      publishedAt: data.publishedAt || new Date().toISOString(),
+      coverImage: data.coverImage || undefined,
+      coverAlt: data.coverAlt || undefined,
+      coverCaption: data.coverCaption || undefined,
+      excerpt: data.excerpt || undefined,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      body: (content as string).trim(),
+    })
   }
 
   posts.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
@@ -106,10 +111,22 @@ export async function getPost(db: D1Binding | undefined, slug: string): Promise<
     return rowToPost(results[0])
   }
 
-  const filepath = fromSlug(slug)
+  const { fs, path, postsDir, matter } = await getFsModule()
+  const filepath = path.join(postsDir, `${slug}.md`)
   try {
     const raw = await fs.readFile(filepath, 'utf-8')
-    return parsePostFile(raw, filepath)
+    const { data, content } = matter(raw)
+    return {
+      slug,
+      title: data.title || '',
+      publishedAt: data.publishedAt || new Date().toISOString(),
+      coverImage: data.coverImage || undefined,
+      coverAlt: data.coverAlt || undefined,
+      coverCaption: data.coverCaption || undefined,
+      excerpt: data.excerpt || undefined,
+      tags: Array.isArray(data.tags) ? data.tags : [],
+      body: (content as string).trim(),
+    }
   } catch {
     return null
   }
@@ -134,7 +151,8 @@ export async function createPost(db: D1Binding | undefined, post: Post): Promise
     return
   }
 
-  const filepath = fromSlug(post.slug)
+  const { fs, path, postsDir, matter } = await getFsModule()
+  const filepath = path.join(postsDir, `${post.slug}.md`)
   const frontmatter: Record<string, unknown> = {
     title: post.title,
     publishedAt: post.publishedAt,
@@ -146,7 +164,7 @@ export async function createPost(db: D1Binding | undefined, post: Post): Promise
   if (post.excerpt) frontmatter.excerpt = post.excerpt
 
   const content = matter.stringify(post.body, frontmatter)
-  await fs.mkdir(POSTS_DIR, { recursive: true })
+  await fs.mkdir(postsDir, { recursive: true })
   await fs.writeFile(filepath, content, 'utf-8')
 }
 
@@ -170,7 +188,9 @@ export async function updatePost(db: D1Binding | undefined, slug: string, update
     return
   }
 
-  const existing = await fs.readFile(fromSlug(slug), 'utf-8')
+  const { fs, path, postsDir, matter } = await getFsModule()
+  const oldFilepath = path.join(postsDir, `${slug}.md`)
+  const existing = await fs.readFile(oldFilepath, 'utf-8')
   const { data: oldData } = matter(existing)
 
   const merged: Record<string, unknown> = {
@@ -187,13 +207,13 @@ export async function updatePost(db: D1Binding | undefined, slug: string, update
   if (update.excerpt !== undefined) merged.excerpt = update.excerpt
   else if (oldData.excerpt) merged.excerpt = oldData.excerpt
 
-  const content = matter.stringify(update.body ?? matter(existing).content, merged)
+  const newContent = matter.stringify(update.body ?? matter(existing).content, merged)
 
   if (slug !== update.slug) {
-    await fs.unlink(fromSlug(slug))
-    await fs.writeFile(fromSlug(update.slug), content, 'utf-8')
+    await fs.unlink(oldFilepath)
+    await fs.writeFile(path.join(postsDir, `${update.slug}.md`), newContent, 'utf-8')
   } else {
-    await fs.writeFile(fromSlug(slug), content, 'utf-8')
+    await fs.writeFile(oldFilepath, newContent, 'utf-8')
   }
 }
 
@@ -203,7 +223,8 @@ export async function deletePost(db: D1Binding | undefined, slug: string): Promi
     return
   }
 
-  await fs.unlink(fromSlug(slug))
+  const { fs, path, postsDir } = await getFsModule()
+  await fs.unlink(path.join(postsDir, `${slug}.md`))
 }
 
 export async function getAllTimelinePosts(db: D1Binding | undefined): Promise<Pick<Post, 'slug' | 'title' | 'publishedAt'>[]> {
@@ -216,19 +237,20 @@ export async function getAllTimelinePosts(db: D1Binding | undefined): Promise<Pi
     }))
   }
 
+  const { fs, path, postsDir, matter } = await getFsModule()
   let files: string[]
   try {
-    files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))
+    files = (await fs.readdir(postsDir)).filter((f: string) => f.endsWith('.md'))
   } catch {
     return []
   }
 
   const posts: Pick<Post, 'slug' | 'title' | 'publishedAt'>[] = []
   for (const file of files) {
-    const raw = await fs.readFile(path.join(POSTS_DIR, file), 'utf-8')
+    const raw = await fs.readFile(path.join(postsDir, file), 'utf-8')
     const { data } = matter(raw)
     posts.push({
-      slug: toSlug(file),
+      slug: path.basename(file, '.md'),
       title: data.title || '',
       publishedAt: data.publishedAt || new Date().toISOString(),
     })
