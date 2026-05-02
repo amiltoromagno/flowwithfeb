@@ -1,20 +1,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import matter from 'gray-matter'
-import { getRequestEvent } from 'h3'
 import type { Post, PostSummary } from '~/types/blog'
 
 const POSTS_DIR = path.resolve(process.cwd(), 'content/posts')
-
-function getD1() {
-  try {
-    const event = getRequestEvent()
-    const db = event?.context?.cloudflare?.env?.DB
-    return db ?? null
-  } catch {
-    return null
-  }
-}
 
 interface PostRow {
   slug: string
@@ -27,6 +16,9 @@ interface PostRow {
   tags: string
   body: string
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type D1Binding = any
 
 function rowToPost(row: PostRow): Post {
   return {
@@ -47,7 +39,7 @@ function toSummary(post: Post): PostSummary {
   return summary
 }
 
-// ─── Filesystem helpers (dev fallback) ───
+// ─── Filesystem helpers ───
 
 function fromSlug(slug: string): string {
   return path.join(POSTS_DIR, `${slug}.md`)
@@ -74,9 +66,7 @@ function parsePostFile(raw: string, filepath: string): Post {
 
 // ─── Exported API ───
 
-export async function listPosts(query?: { from?: string }): Promise<PostSummary[]> {
-  const db = getD1()
-
+export async function listPosts(db: D1Binding | undefined, query?: { from?: string }): Promise<PostSummary[]> {
   if (db) {
     let sql = 'SELECT * FROM posts ORDER BY published_at DESC'
     const params: any[] = []
@@ -89,7 +79,6 @@ export async function listPosts(query?: { from?: string }): Promise<PostSummary[
     return results.map(rowToPost).map(toSummary)
   }
 
-  // Fallback: filesystem
   let files: string[]
   try {
     files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))
@@ -114,16 +103,13 @@ export async function listPosts(query?: { from?: string }): Promise<PostSummary[
   return posts.map(toSummary)
 }
 
-export async function getPost(slug: string): Promise<Post | null> {
-  const db = getD1()
-
+export async function getPost(db: D1Binding | undefined, slug: string): Promise<Post | null> {
   if (db) {
     const { results } = await db.prepare('SELECT * FROM posts WHERE slug = ?').bind(slug).all<PostRow>()
     if (results.length === 0) return null
     return rowToPost(results[0])
   }
 
-  // Fallback: filesystem
   const filepath = fromSlug(slug)
   try {
     const raw = await fs.readFile(filepath, 'utf-8')
@@ -133,9 +119,7 @@ export async function getPost(slug: string): Promise<Post | null> {
   }
 }
 
-export async function createPost(post: Post): Promise<void> {
-  const db = getD1()
-
+export async function createPost(db: D1Binding | undefined, post: Post): Promise<void> {
   if (db) {
     await db.prepare(
       `INSERT INTO posts (slug, title, published_at, cover_image, cover_alt, cover_caption, excerpt, tags, body)
@@ -154,7 +138,6 @@ export async function createPost(post: Post): Promise<void> {
     return
   }
 
-  // Fallback: filesystem
   const filepath = fromSlug(post.slug)
   const frontmatter: Record<string, unknown> = {
     title: post.title,
@@ -171,9 +154,7 @@ export async function createPost(post: Post): Promise<void> {
   await fs.writeFile(filepath, content, 'utf-8')
 }
 
-export async function updatePost(slug: string, update: Partial<Post> & { slug: string }): Promise<void> {
-  const db = getD1()
-
+export async function updatePost(db: D1Binding | undefined, slug: string, update: Partial<Post> & { slug: string }): Promise<void> {
   if (db) {
     await db.prepare(
       `UPDATE posts SET slug = ?, title = ?, published_at = ?, cover_image = ?, cover_alt = ?, cover_caption = ?, excerpt = ?, tags = ?, body = ?
@@ -193,7 +174,6 @@ export async function updatePost(slug: string, update: Partial<Post> & { slug: s
     return
   }
 
-  // Fallback: filesystem
   const existing = await fs.readFile(fromSlug(slug), 'utf-8')
   const { data: oldData } = matter(existing)
 
@@ -221,21 +201,16 @@ export async function updatePost(slug: string, update: Partial<Post> & { slug: s
   }
 }
 
-export async function deletePost(slug: string): Promise<void> {
-  const db = getD1()
-
+export async function deletePost(db: D1Binding | undefined, slug: string): Promise<void> {
   if (db) {
     await db.prepare('DELETE FROM posts WHERE slug = ?').bind(slug).run()
     return
   }
 
-  // Fallback: filesystem
   await fs.unlink(fromSlug(slug))
 }
 
-export async function getAllTimelinePosts(): Promise<Pick<Post, 'slug' | 'title' | 'publishedAt'>[]> {
-  const db = getD1()
-
+export async function getAllTimelinePosts(db: D1Binding | undefined): Promise<Pick<Post, 'slug' | 'title' | 'publishedAt'>[]> {
   if (db) {
     const { results } = await db.prepare('SELECT slug, title, published_at FROM posts ORDER BY published_at DESC').all<PostRow>()
     return results.map((r) => ({
@@ -245,7 +220,6 @@ export async function getAllTimelinePosts(): Promise<Pick<Post, 'slug' | 'title'
     }))
   }
 
-  // Fallback: filesystem
   let files: string[]
   try {
     files = (await fs.readdir(POSTS_DIR)).filter((f) => f.endsWith('.md'))

@@ -1,10 +1,10 @@
 name = "flow-with-feb"
-compatibility_date = "2025-01-01"
+compatibility_date = "2025-04-01"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "blog-db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "41718559-8ecd-48e9-b6d3-063c984e1da0"
 
 [[r2_buckets]]
 binding = "IMAGES"

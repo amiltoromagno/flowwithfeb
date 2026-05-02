@@ -1,10 +1,11 @@
 import { deletePost } from '~/server/utils/posts'
 
 export default defineEventHandler(async (event) => {
+  const db = event.context?.cloudflare?.env?.DB
   const slug = getRouterParam(event, 'slug')
   if (!slug) {
     throw createError({ statusCode: 400, statusMessage: 'slug is required' })
   }
-  await deletePost(slug)
+  await deletePost(db, slug)
   return { success: true }
 })

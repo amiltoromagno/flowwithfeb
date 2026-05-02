@@ -2,6 +2,7 @@ import { updatePost } from '~/server/utils/posts'
 import type { Post } from '~/types/blog'
 
 export default defineEventHandler(async (event) => {
+  const db = event.context?.cloudflare?.env?.DB
   const slug = getRouterParam(event, 'slug')
   if (!slug) {
     throw createError({ statusCode: 400, statusMessage: 'slug is required' })
@@ -10,6 +11,6 @@ export default defineEventHandler(async (event) => {
   if (!body.slug) {
     throw createError({ statusCode: 400, statusMessage: 'slug is required' })
   }
-  await updatePost(slug, body)
+  await updatePost(db, slug, body)
   return { success: true }
 })

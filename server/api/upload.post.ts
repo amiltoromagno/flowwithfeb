@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { getRequestEvent } from 'h3'
 
 export default defineEventHandler(async (event) => {
   const formData = await readMultipartFormData(event)
@@ -20,17 +19,14 @@ export default defineEventHandler(async (event) => {
 
   const name = `${randomUUID()}${ext}`
 
-  // Cloudflare R2
   const r2 = event.context?.cloudflare?.env?.IMAGES
   if (r2) {
     await r2.put(name, file.data, {
       httpMetadata: { contentType: file.type },
     })
-    // Return a path that works behind a custom domain or R2 public URL
     return { url: `/images/${name}` }
   }
 
-  // Dev fallback: filesystem
   const fs = await import('node:fs/promises')
   const path = await import('node:path')
   const UPLOAD_DIR = path.resolve(process.cwd(), 'public/images')
