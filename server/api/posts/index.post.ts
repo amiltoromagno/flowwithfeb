@@ -1,0 +1,11 @@
+import { createPost } from '~/server/utils/posts'
+import type { Post } from '~/types/blog'
+
+export default defineEventHandler(async (event) => {
+  const body = await readBody<Post>(event)
+  if (!body?.slug || !body?.title) {
+    throw createError({ statusCode: 400, statusMessage: 'slug and title are required' })
+  }
+  await createPost(body)
+  return { success: true }
+})
