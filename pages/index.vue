@@ -199,7 +199,7 @@
 <script setup lang="ts">
 import { buildTimeline, usePosts, type PostSummary, type TimelineMonth } from '~/composables/usePosts'
 
-useHead({ title: 'Flow with Feb — Writing' })
+useHead({ title: 'Flow with Feb' })
 
 const route = useRoute()
 const router = useRouter()
